@@ -1,18 +1,16 @@
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Iterable
 
 import marqo
-from haystack.preview.dataclasses import Document
-from haystack.preview.document_stores.decorator import document_store
-from haystack.preview.document_stores.protocols import DuplicatePolicy
+from haystack.document_stores.types import DocumentStore, DuplicatePolicy
+from haystack.dataclasses import Document
 
 from marqo_haystack.errors import MarqoDocumentStoreFilterError
 
 logger = logging.getLogger(__name__)
 
 
-@document_store
-class MarqoDocumentStore:
+class MarqoDocumentStore(DocumentStore):
     """
     A MarqoDocumentStore document store for Haystack.
     """
@@ -131,10 +129,10 @@ class MarqoDocumentStore:
                 filter_statements.append(f"({self._convert_filters(filters[k], k[1:].upper())})")
                 continue
 
-            if k in {"id", "text", "mime_type", "metadata", "id_hash_keys", "score", "embedding"}:
+            if k in {"id", "content", "meta", "blob", "score", "embedding", "sparse_embedding"}:
                 doc_key = k
             else:
-                doc_key = "__metadata_" + k
+                doc_key = "__meta_" + k
 
             # get the child of the filter for the key
             child = filters[k]
@@ -227,20 +225,21 @@ class MarqoDocumentStore:
         Raises:
             ValueError: If the documents are not a list of the Document object.
         """
-        if not isinstance(documents, list):
-            msg = "Documents must be a list"
-            raise ValueError(msg)
+        if (
+            not isinstance(documents, Iterable)
+            or isinstance(documents, str)
+            or any(not isinstance(doc, Document) for doc in documents)
+        ):
+            err = "Please provide a list of Documents."
+            raise ValueError(err)
 
         marqo_docs = []
         for d in documents:
-            if not isinstance(d, Document):
-                msg = "Documents must be of type Document"
-                raise ValueError(msg)
             d = self._prepare_document(d)
 
-            if d["text"] is None:
+            if d["content"] is None:
                 logger.warn(
-                    f"Document {d['_id']} has no text, "
+                    f"Document {d['_id']} has no content, "
                     "therefor Marqo has nothing to create an embedding for. This document will be skipped"
                 )
                 continue
@@ -248,7 +247,7 @@ class MarqoDocumentStore:
             marqo_docs.append(d)
 
         self._index.add_documents(
-            documents=marqo_docs, client_batch_size=self.client_batch_size, tensor_fields=["text"]
+            documents=marqo_docs, client_batch_size=self.client_batch_size, tensor_fields=["content"]
         )
 
     def delete_documents(self, document_ids: List[str]) -> None:
@@ -285,15 +284,15 @@ class MarqoDocumentStore:
         """
         marqo_doc_meta = {}
 
-        for k in d.metadata:
-            new_k = "__metadata_" + k
-            marqo_doc_meta[new_k] = d.metadata[k]
+        for k in d.meta:
+            new_k = "__meta_" + k
+            marqo_doc_meta[new_k] = d.meta[k]
 
         document = {
             "_id": d.id,
             "id": d.id,
-            "text": d.text,
-            "mime_type": d.mime_type,
+            "content": d.content,
+            "blob": d.blob,
         }
 
         document |= marqo_doc_meta
@@ -305,20 +304,19 @@ class MarqoDocumentStore:
         """
         documents = []
         for marqo_doc in marqo_documents:
-            # prepare metadata
-            metadata: Dict[str, Any] = {}
+            # prepare meta
+            meta: Dict[str, Any] = {}
             for k in marqo_doc:
-                if k.startswith("__metadata_"):
-                    new_k = k.replace("__metadata_", "")
-                    metadata[new_k] = marqo_doc[k]
+                if k.startswith("__meta_"):
+                    new_k = k.replace("__meta_", "")
+                    meta[new_k] = marqo_doc[k]
 
-            mime_type = marqo_doc.get("mime_type")
+            blob = marqo_doc.get("blob")
             document = Document(
                 id=marqo_doc["_id"],
-                text=marqo_doc["text"],
-                metadata=metadata,
-                mime_type=mime_type,
-                score=marqo_doc.get("_score"),
+                content=marqo_doc["content"],
+                meta=meta,
+                blob=blob,
             )
 
             documents.append(document)

@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
-from haystack.preview import Document, component
+from haystack.dataclasses import Document
+from haystack import Document, component
 from marqo_haystack import MarqoDocumentStore
 
 
