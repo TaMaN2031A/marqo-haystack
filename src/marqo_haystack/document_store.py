@@ -111,7 +111,7 @@ class MarqoDocumentStore(DocumentStore):
 
     def _convert_filters(self, filters: Optional[Dict[str, Any]] = None, boolean_op: str = "AND") -> str:
         """
-        Convert haystack filters to marqo filterstring capturing all boolean operators
+        Convert haystack filters to marqo filter string capturing all boolean operators
         """
 
         if not filters:

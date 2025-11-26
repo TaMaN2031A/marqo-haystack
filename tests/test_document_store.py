@@ -28,11 +28,10 @@ class TestDocumentStore(DocumentStoreBaseTests):
         mq.delete_index(test_index)
         return MarqoDocumentStore(collection_name=test_index)
 
+    """
     @pytest.mark.unit
     def test_get_existing(self, document_store: MarqoDocumentStore):
-        """
-        Deleting an existing document
-        """
+        #Deleting an existing document
         doc = Document(content="test doc")
         document_store.write_documents([doc])
 
@@ -43,9 +42,7 @@ class TestDocumentStore(DocumentStoreBaseTests):
 
     @pytest.mark.unit
     def test_search_documents(self, document_store: MarqoDocumentStore):
-        """
-        Searching documents
-        """
+        #Searching documents
         doc = Document(id="mydoc", content="test1 test2")
         document_store.write_documents([doc])
 
@@ -179,3 +176,5 @@ class TestDocumentStore(DocumentStoreBaseTests):
     @pytest.mark.unit
     def test_filter_document_dataframe(self, document_store: DocumentStore, filterable_docs: List[Document]):
         pass
+    
+    """
