@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union, Iterable
 import marqo
 from haystack.document_stores.types import DocumentStore, DuplicatePolicy
 from haystack.dataclasses import Document
+from haystack.dataclasses.byte_stream import ByteStream
 
 from marqo_haystack.errors import MarqoDocumentStoreFilterError
 
@@ -40,7 +41,7 @@ class MarqoDocumentStore(DocumentStore):
 
         self._collection = collection_name
 
-        indexes = {idx.index_name for idx in self._marqo_client.get_indexes()["results"]}
+        indexes = {idx["indexName"] for idx in self._marqo_client.get_indexes()["results"]}
         if self._collection not in indexes:
             if not api_key:
                 self._marqo_client.create_index(self._collection, settings_dict=settings_dict)
@@ -68,7 +69,7 @@ class MarqoDocumentStore(DocumentStore):
         return self._index.get_stats()["numberOfVectors"]
 
     def filter_documents(self, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        """Returns at most 10,000 documents that match the filter
+        """Returns at most 1,000 documents that match the filter
 
         Args:
             filters (Optional[Dict[str, Any]], optional): Filters to apply. Defaults to None.
@@ -85,7 +86,8 @@ class MarqoDocumentStore(DocumentStore):
             raise MarqoDocumentStoreFilterError(msg)
 
         filter_string = self._convert_filters(filters)
-        results = self._index.search("", filter_string=filter_string, limit=10000)
+        print("Filter string: ", filter_string)
+        results = self._index.search("", filter_string=filter_string, limit=1000)
         hits = []
         for r in results["hits"]:
             r.pop("_score")
@@ -109,103 +111,44 @@ class MarqoDocumentStore(DocumentStore):
                 filter_value = filter_value.replace(c, f"\\{c}")
         return filter_value
 
-    def _convert_filters(self, filters: Optional[Dict[str, Any]] = None, boolean_op: str = "AND") -> str:
+    def _convert_filters(self, f: dict) -> str | None:
         """
         Convert haystack filters to marqo filter string capturing all boolean operators
         """
+        if "operator" in f and "conditions" in f:
+            op = f["operator"].upper()
+            sub_filters = [self._convert_filters(c) for c in f["conditions"]]
+            return f"({f' {op} '.join(sub_filters)})"
 
-        if not filters:
-            return None
+        field = f["field"]
+        operator = f["operator"]
+        value = f["value"]
+        doc_key = "__meta_" + field.split("meta.")[1] if field.startswith("meta.") else field
 
-        filter_statements = []
+        if value is None:
+            raise MarqoDocumentStoreFilterError(f"Value cannot be None for {operator} operator")
 
-        if isinstance(filters, list):
-            for f in filters:
-                filter_statements.append(self._convert_filters(f))
-            return f" {boolean_op} ".join(filter_statements)
-
-        for k in filters:
-            if k in {"$and", "$or", "$not"}:
-                filter_statements.append(f"({self._convert_filters(filters[k], k[1:].upper())})")
-                continue
-
-            if k in {"id", "content", "meta", "blob", "score", "embedding", "sparse_embedding"}:
-                doc_key = k
-            else:
-                doc_key = "__meta_" + k
-
-            # get the child of the filter for the key
-            child = filters[k]
-
-            # if the child is a dict then we go deeper
-            if isinstance(child, dict):
-                for op in child:
-                    # if logical operator
-                    if op in {"$and", "$or", "$not"}:
-                        if isinstance(child[op], list):
-                            new_op = {}
-                            for v in child[op]:
-                                new_op |= v
-                            child[op] = new_op
-                        filter_statements.append(f"({self._convert_filters({k: child[op]}, op[1:].upper())})")
-                        continue
-
-                    value = child[op]
-
-                    # if comparison operator
-                    if op == "$eq":
-                        filt = f"{doc_key}:({value})"
-                    elif op == "$ne":
-                        filt = f"NOT {doc_key}:({value})"
-                    elif op == "$in":
-                        filts = []
-                        for v in value:
-                            filts.append(f"{doc_key}:({v})")
-                        filt = f"({' OR '.join(filts)})"
-                    elif op == "$nin":
-                        filts = []
-                        for v in value:
-                            filts.append(f"NOT {doc_key}:{v}")
-                        filt = f"({' AND '.join(filts)})"
-                    elif op == "$gt":
-                        # marqo doesn't have an exclusing range so we use a magic number
-                        if type(value) not in {int, float}:
-                            msg = f"Filter value {value} of type {type(value)} is not supported for range filters, must be of type int or float"
-                            raise MarqoDocumentStoreFilterError(msg)
-                        filt = f"{doc_key}:[{value + value*1e-16} TO *]"
-                    elif op == "$gte":
-                        if type(value) not in {int, float}:
-                            msg = f"Filter value {value} of type {type(value)} is not supported for range filters, must be of type int or float"
-                            raise MarqoDocumentStoreFilterError(msg)
-                        filt = f"{doc_key}:[{value} TO *]"
-                    elif op == "$lt":
-                        if type(value) not in {int, float}:
-                            msg = f"Filter value {value} of type {type(value)} is not supported for range filters, must be of type int or float"
-                            raise MarqoDocumentStoreFilterError(msg)
-                        # marqo doesn't have an exclusing range so we use a magic number
-                        filt = f"{doc_key}:[* TO {value - value*1e-16}]"
-                    elif op == "$lte":
-                        if type(value) not in {int, float}:
-                            msg = f"Filter value {value} of type {type(value)} is not supported for range filters, must be of type int or float"
-                            raise MarqoDocumentStoreFilterError(msg)
-                        filt = f"{doc_key}:[* TO {value}]"
-                    else:
-                        msg = f"Operator {op} is not supported with MarqoDocumentStore or is not a valid operator"
-                        raise MarqoDocumentStoreFilterError(msg)
-                    filter_statements.append(filt)
-                    continue
-            # if the child is a list then we apply the implict OR
-            elif isinstance(child, list):
-                filts = []
-                for v in child:
-                    filts.append(f"{doc_key}:({v})")
-                filt = f"({' OR '.join(filts)})"
-                filter_statements.append(filt)
-            # otherwise the child is a literal value
-            else:
-                filter_statements.append(f"{doc_key}:({child})")
-
-        return f" {boolean_op} ".join(filter_statements)
+        if operator == "==":
+            return f"{doc_key}:({value})"
+        elif operator == "!=":
+            return f"NOT {doc_key}:({value})"
+        elif operator == "in":
+            return "(" + " OR ".join(f"{doc_key}:({v})" for v in value) + ")"
+        elif operator == "not in":
+            return "(" + " AND ".join(f"NOT {doc_key}:({v})" for v in value) + ")"
+        elif operator in {">", ">=", "<", "<="}:
+            if not isinstance(value, (int, float)):
+                raise MarqoDocumentStoreFilterError(f"Value {value} must be int or float for range filters")
+            if operator == ">":
+                return f"{doc_key}:[{value + value * 1e-16} TO *]"
+            elif operator == ">=":
+                return f"{doc_key}:[{value} TO *]"
+            elif operator == "<":
+                return f"{doc_key}:[* TO {value - value * 1e-16}]"
+            elif operator == "<=":
+                return f"{doc_key}:[* TO {value}]"
+        else:
+            raise MarqoDocumentStoreFilterError(f"Unsupported operator {operator}")
 
     def get_documents_by_id(self, ids: List[str]) -> List[Document]:
         """
@@ -215,7 +158,7 @@ class MarqoDocumentStore(DocumentStore):
         results = [r for r in results if r["_found"]]
         return self._get_result_to_documents(results)
 
-    def write_documents(self, documents: List[Document], policy: DuplicatePolicy = DuplicatePolicy.FAIL) -> None:
+    def write_documents(self, documents: List[Document], policy: DuplicatePolicy = DuplicatePolicy.FAIL) -> int:
         """Writes documents into the Marqo index.
 
         Args:
@@ -292,8 +235,10 @@ class MarqoDocumentStore(DocumentStore):
             "_id": d.id,
             "id": d.id,
             "content": d.content,
-            "blob": d.blob,
         }
+
+        if d.blob is not None:
+            document["blob"] = d.blob.to_dict()
 
         document |= marqo_doc_meta
         return document
@@ -311,12 +256,12 @@ class MarqoDocumentStore(DocumentStore):
                     new_k = k.replace("__meta_", "")
                     meta[new_k] = marqo_doc[k]
 
-            blob = marqo_doc.get("blob")
+            if blob := marqo_doc.get("blob"):
+                marqo_doc["blob"] = ByteStream.from_dict(blob)
             document = Document(
                 id=marqo_doc["_id"],
                 content=marqo_doc["content"],
                 meta=meta,
-                blob=blob,
             )
 
             documents.append(document)
