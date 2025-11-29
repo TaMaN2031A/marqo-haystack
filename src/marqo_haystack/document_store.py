@@ -1,5 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional, Union, Iterable
+import math
+import random
 
 import marqo
 from haystack.document_stores.types import DocumentStore, DuplicatePolicy
@@ -18,6 +20,7 @@ class MarqoDocumentStore(DocumentStore):
 
     def __init__(
         self,
+        vector_dimension: int = 512,
         collection_name: str = "documents",
         url: str = "http://localhost:8882",
         api_key: Optional[str] = None,
@@ -36,15 +39,24 @@ class MarqoDocumentStore(DocumentStore):
         Raises:
             ValueError: If collection_name is not an existing index and you are using Marqo cloud then an error will be raised.
         """
-
+        self._vector_dimension = vector_dimension
         self._marqo_client = marqo.Client(url=url, api_key=api_key)
-
+        self.client_batch_size = client_batch_size
         self._collection = collection_name
+        self._settings_dict = settings_dict
+        # A document store will receive embedding if any, but it is not to create it
+        self._model = "no_model"
+        self._model_properties = {"type": self._model, "dimensions": self._vector_dimension}
+        seed = 42
+        random.seed(seed)
+        self._dummy_vector = [random.random() * 0.01 for _ in range(self._vector_dimension)]
 
         indexes = {idx["indexName"] for idx in self._marqo_client.get_indexes()["results"]}
         if self._collection not in indexes:
             if not api_key:
-                self._marqo_client.create_index(self._collection, settings_dict=settings_dict)
+               # self._marqo_client.create_index(self._collection, settings_dict=settings_dict)
+                self._marqo_client.create_index(self._collection, model=self._model,
+                                      model_properties=self._model_properties, settings_dict=settings_dict)
             else:
                 raise ValueError(
                     "If using this integration with Marqo Cloud you must create your index ahead of time, specify your index name as the collection_name in the MarqoDocumentStore constructor."
@@ -54,7 +66,6 @@ class MarqoDocumentStore(DocumentStore):
 
         self._index = self._marqo_client.index(self._collection)
 
-        self.client_batch_size = client_batch_size
 
     def count_documents(self) -> int:
         """
@@ -87,7 +98,11 @@ class MarqoDocumentStore(DocumentStore):
 
         filter_string = self._convert_filters(filters)
         print("Filter string: ", filter_string)
-        results = self._index.search("", filter_string=filter_string, limit=1000)
+        results = self._index.search(
+            {"customVector": {"content": "", "vector": self._dummy_vector}},
+            filter_string=filter_string,
+            limit=1000
+        )
         hits = []
         for r in results["hits"]:
             r.pop("_score")
@@ -147,6 +162,7 @@ class MarqoDocumentStore(DocumentStore):
                 return f"{doc_key}:[* TO {value - value * 1e-16}]"
             elif operator == "<=":
                 return f"{doc_key}:[* TO {value}]"
+            return None
         else:
             raise MarqoDocumentStoreFilterError(f"Unsupported operator {operator}")
 
@@ -181,16 +197,19 @@ class MarqoDocumentStore(DocumentStore):
             d = self._prepare_document(d)
 
             if d["content"] is None:
-                logger.warn(
-                    f"Document {d['_id']} has no content, "
-                    "therefor Marqo has nothing to create an embedding for. This document will be skipped"
+                logger.warning(
+                    f"Document {d['_id']} has no content. "
+                    "This document will be skipped"
                 )
                 continue
 
             marqo_docs.append(d)
 
         self._index.add_documents(
-            documents=marqo_docs, client_batch_size=self.client_batch_size, tensor_fields=["content"]
+            documents=marqo_docs,
+            client_batch_size=self.client_batch_size,
+            mappings={"content_custom_vector": {"type": "custom_vector"}},
+            tensor_fields=["content_custom_vector"]
         )
 
     def delete_documents(self, document_ids: List[str]) -> None:
@@ -202,7 +221,7 @@ class MarqoDocumentStore(DocumentStore):
         self._index.delete_documents(ids=document_ids)
 
     def search(
-        self, queries: List[Union[str, Dict[str, float]]], top_k: int, filters: Optional[Dict[str, Any]] = None
+        self, queries: List[Union[str, List[float]]], top_k: int, filters: Optional[Dict[str, Any]] = None
     ) -> List[List[Document]]:
         """Perform a search for a list of queries.
 
@@ -215,8 +234,20 @@ class MarqoDocumentStore(DocumentStore):
             List[List[Document]]: A list of matching documents for each query.
         """
         results = []
-        for query in queries:
-            result = self._index.search(q=query, limit=top_k, filter_string=self._convert_filters(filters))
+        for query_or_query_embedding in queries:
+            if isinstance(query_or_query_embedding, str):
+                result = self._index.search(
+                    q={"content": query_or_query_embedding, "vector": self._dummy_vector},
+                    limit=top_k,
+                    filter_string=self._convert_filters(filters)
+                )
+            else:
+                result = self._index.search(
+                    q={"content": "", "vector": query_or_query_embedding},
+                    limit=top_k,
+                    filter_string=self._convert_filters(filters)
+                )
+
             results.append(result)
 
         return self._query_result_to_documents(results)
@@ -225,23 +256,26 @@ class MarqoDocumentStore(DocumentStore):
         """
         Change the document in a way we can better store it into Marqo.
         """
-        marqo_doc_meta = {}
+        marqo_doc = {}
+        haystack_doc = d.to_dict(flatten=False)
+        custom_vector = {"vector": "", "content": self._dummy_vector}
 
-        for k in d.meta:
-            new_k = "__meta_" + k
-            marqo_doc_meta[new_k] = d.meta[k]
+        marqo_doc["_id"] = d.id
+        for key, value in haystack_doc.items():
+            if key == "meta":
+                for key_, value_ in value.items():
+                    if value_ is not None:
+                        marqo_doc["__meta_" + key_] = value_
+            elif key == "content":
+                custom_vector["content"] = value
+            elif key == "embedding":
+                custom_vector["embedding"] = value
+            elif value is not None:
+                marqo_doc[key] = value
 
-        document = {
-            "_id": d.id,
-            "id": d.id,
-            "content": d.content,
-        }
+        marqo_doc["content_custom_vector"] = custom_vector
 
-        if d.blob is not None:
-            document["blob"] = d.blob.to_dict()
-
-        document |= marqo_doc_meta
-        return document
+        return marqo_doc
 
     def _get_result_to_documents(self, marqo_documents: List[Dict[str, Any]]) -> List[Document]:
         """
@@ -250,21 +284,25 @@ class MarqoDocumentStore(DocumentStore):
         documents = []
         for marqo_doc in marqo_documents:
             # prepare meta
+            haystack_doc: Dict[str, Any] = {}
             meta: Dict[str, Any] = {}
             for k in marqo_doc:
                 if k.startswith("__meta_"):
                     new_k = k.replace("__meta_", "")
                     meta[new_k] = marqo_doc[k]
+                elif k == "content_custom_vector":
+                    haystack_doc["content"] = marqo_doc[k]["content"]
+                    if marqo_doc["content_custom_vector"]["embedding"] != self._dummy_vector:
+                        haystack_doc["embedding"] = marqo_doc["content_custom_vector"]["embedding"]
+                elif k == "_id":
+                    haystack_doc["id"] = marqo_doc[k]
+                elif k == "score":
+                    continue
+                else:
+                    haystack_doc[k] = marqo_doc[k]
 
-            if blob := marqo_doc.get("blob"):
-                marqo_doc["blob"] = ByteStream.from_dict(blob)
-            document = Document(
-                id=marqo_doc["_id"],
-                content=marqo_doc["content"],
-                meta=meta,
-            )
-
-            documents.append(document)
+            haystack_doc["meta"] = meta
+            documents.append(Document().from_dict(haystack_doc))
 
         return documents
 

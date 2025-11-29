@@ -28,6 +28,11 @@ class TestDocumentStore(DocumentStoreBaseTests):
         mq.delete_index(test_index)
         return MarqoDocumentStore(collection_name=test_index)
 
+    @pytest.mark.skip(reason="Filter on None is not supported.")
+    @pytest.mark.unit
+    def test_comparison_equal_with_none(self, document_store, filterable_docs):
+        pass
+
     """
     @pytest.mark.unit
     def test_get_existing(self, document_store: MarqoDocumentStore):

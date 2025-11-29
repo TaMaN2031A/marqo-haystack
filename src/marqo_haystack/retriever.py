@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from haystack.dataclasses import Document
 from haystack import Document, component
 from marqo_haystack import MarqoDocumentStore
@@ -24,7 +24,7 @@ class MarqoRetriever:
         self.document_store = document_store
 
     @component.output_types(documents=List[List[Document]])
-    def run(self, queries: List[str], filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None):
+    def run(self, queries: List[Union[str | List[float]]], filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None):
         """Run the retriever on the given list of queries.
 
         Args:
