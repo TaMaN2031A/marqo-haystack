@@ -1,4 +1,6 @@
+import base64
 import logging
+import struct
 from typing import Any, Dict, List, Optional, Union, Iterable
 import math
 import random
@@ -130,6 +132,9 @@ class MarqoDocumentStore(DocumentStore):
         """
         Convert haystack filters to marqo filter string capturing all boolean operators
         """
+        if f is None or f == {}:
+            return None
+
         if "operator" in f and "conditions" in f:
             op = f["operator"].upper()
             sub_filters = [self._convert_filters(c) for c in f["conditions"]]
@@ -194,17 +199,14 @@ class MarqoDocumentStore(DocumentStore):
 
         marqo_docs = []
         for d in documents:
-            d = self._prepare_document(d)
-
-            if d["content"] is None:
+            if d.content is None:
                 logger.warning(
-                    f"Document {d['_id']} has no content. "
+                    f"Document {d.id} has no content. "
                     "This document will be skipped"
                 )
                 continue
-
+            d = self._prepare_document(d)
             marqo_docs.append(d)
-
         self._index.add_documents(
             documents=marqo_docs,
             client_batch_size=self.client_batch_size,
@@ -258,7 +260,7 @@ class MarqoDocumentStore(DocumentStore):
         """
         marqo_doc = {}
         haystack_doc = d.to_dict(flatten=False)
-        custom_vector = {"vector": "", "content": self._dummy_vector}
+        custom_vector = {"vector": self._dummy_vector, "content": None}
 
         marqo_doc["_id"] = d.id
         for key, value in haystack_doc.items():
@@ -266,10 +268,15 @@ class MarqoDocumentStore(DocumentStore):
                 for key_, value_ in value.items():
                     if value_ is not None:
                         marqo_doc["__meta_" + key_] = value_
-            elif key == "content":
+            elif key == "content": # cannot be None
                 custom_vector["content"] = value
             elif key == "embedding":
-                custom_vector["embedding"] = value
+                if value is not None:
+                    custom_vector["vector"] = value
+                    # Not redundant, didn't find a way to make marqo return the embeddings of the custom vector
+                    binary = struct.pack(f'{self._vector_dimension}f', *value)
+                    encoded = base64.b64encode(binary).decode()
+                    marqo_doc["emb_raw"] = encoded
             elif value is not None:
                 marqo_doc[key] = value
 
@@ -286,22 +293,29 @@ class MarqoDocumentStore(DocumentStore):
             # prepare meta
             haystack_doc: Dict[str, Any] = {}
             meta: Dict[str, Any] = {}
+            # stored it independently because custom vector didn't return it
+            embedding: Dict[str, Any] = {}
+
             for k in marqo_doc:
                 if k.startswith("__meta_"):
                     new_k = k.replace("__meta_", "")
                     meta[new_k] = marqo_doc[k]
                 elif k == "content_custom_vector":
-                    haystack_doc["content"] = marqo_doc[k]["content"]
-                    if marqo_doc["content_custom_vector"]["embedding"] != self._dummy_vector:
-                        haystack_doc["embedding"] = marqo_doc["content_custom_vector"]["embedding"]
+                    haystack_doc["content"] = marqo_doc[k]
                 elif k == "_id":
                     haystack_doc["id"] = marqo_doc[k]
-                elif k == "score":
+                elif k == "emb_raw":
+                    embedding[k] = marqo_doc[k]
+                elif k == "_score" or k == "_highlights":
                     continue
                 else:
                     haystack_doc[k] = marqo_doc[k]
 
             haystack_doc["meta"] = meta
+            if len(embedding) > 0:
+                decoded = base64.b64decode(embedding["emb_raw"])
+                vector = list(struct.unpack(f'{self._vector_dimension}f', decoded))
+                haystack_doc["embedding"] = vector
             documents.append(Document().from_dict(haystack_doc))
 
         return documents

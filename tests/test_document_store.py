@@ -2,6 +2,7 @@ from typing import List
 
 import pytest
 import marqo
+from collections import Counter
 
 from haystack.dataclasses import Document
 from haystack.document_stores.errors import DuplicateDocumentError
@@ -16,6 +17,20 @@ class TestDocumentStore(DocumentStoreBaseTests):
     Common test cases will be provided by `DocumentStoreBaseTests` but
     you can add more to this class.
     """
+
+    def assert_documents_are_equal(self, received: list[Document], expected: list[Document]):
+        """
+        Assert that two lists of Documents are equal.
+
+        This is used in every test, if a Document Store implementation has a different behaviour
+        it should override this method. This can happen for example when the Document Store sets
+        a score to returned Documents. Since we can't know what the score will be, we can't compare
+        the Documents reliably.
+        """
+        received_dicts = [d.to_dict(flatten=True) if hasattr(d, "to_dict") else d for d in received]
+        expected_dicts = [d.to_dict(flatten=True) if hasattr(d, "to_dict") else d for d in expected]
+
+        assert Counter(map(frozenset, received_dicts)) == Counter(map(frozenset, expected_dicts))
 
     @pytest.fixture
     def document_store(self) -> MarqoDocumentStore:
@@ -32,6 +47,28 @@ class TestDocumentStore(DocumentStoreBaseTests):
     @pytest.mark.unit
     def test_comparison_equal_with_none(self, document_store, filterable_docs):
         pass
+
+    @pytest.mark.skip(reason="Filter on None is not supported.")
+    @pytest.mark.unit
+    def test_comparison_not_equal_with_none(self, document_store, filterable_docs):
+        pass
+
+    @pytest.mark.skip(reason="Filter on None is not supported.")
+    @pytest.mark.unit
+    def test_comparison_greater_than_with_none(self, document_store, filterable_docs):
+        pass
+
+    @pytest.mark.skip(reason="Filter on None is not supported.")
+    @pytest.mark.unit
+    def test_comparison_greater_than_equal_with_none(self, document_store, filterable_docs):
+        pass
+
+    def test_comparison_less_than_with_none(self, document_store, filterable_docs):
+        pass
+
+    def test_comparison_less_than_equal_with_none(self, document_store, filterable_docs):
+        pass
+
 
     """
     @pytest.mark.unit
