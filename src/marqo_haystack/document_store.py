@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime
 import logging
 import struct
 from typing import Any, Dict, List, Optional, Union, Iterable
@@ -22,7 +23,7 @@ class MarqoDocumentStore(DocumentStore):
 
     def __init__(
         self,
-        vector_dimension: int = 512,
+        vector_dimension: int,
         collection_name: str = "documents",
         url: str = "http://localhost:8882",
         api_key: Optional[str] = None,
@@ -137,8 +138,14 @@ class MarqoDocumentStore(DocumentStore):
 
         if "operator" in f and "conditions" in f:
             op = f["operator"].upper()
+            if not isinstance(f["conditions"], list):
+                raise MarqoDocumentStoreFilterError(f"Conditions must be a list, got {f['conditions']}")
             sub_filters = [self._convert_filters(c) for c in f["conditions"]]
             return f"({f' {op} '.join(sub_filters)})"
+
+        required_keys = ("field", "operator", "value")
+        if not all(k in f for k in required_keys):
+            raise MarqoDocumentStoreFilterError(f"Condition is missing one of the keys: {f}")
 
         field = f["field"]
         operator = f["operator"]
@@ -147,24 +154,35 @@ class MarqoDocumentStore(DocumentStore):
 
         if value is None:
             raise MarqoDocumentStoreFilterError(f"Value cannot be None for {operator} operator")
+        # try to parse isoformat dates
+        if isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value).timestamp()
+            except ValueError:
+                pass
 
         if operator == "==":
             return f"{doc_key}:({value})"
         elif operator == "!=":
             return f"NOT {doc_key}:({value})"
-        elif operator == "in":
-            return "(" + " OR ".join(f"{doc_key}:({v})" for v in value) + ")"
-        elif operator == "not in":
-            return "(" + " AND ".join(f"NOT {doc_key}:({v})" for v in value) + ")"
+        elif operator in {"in", "not in"}:
+            if not isinstance(value, list):
+                raise MarqoDocumentStoreFilterError(f"Value {value} must be a list for '{operator}' operator")
+
+            if operator == "in":
+                return "(" + " OR ".join(f"{doc_key}:({v})" for v in value) + ")"
+            else:  # "not in"
+                return "(" + " AND ".join(f"NOT {doc_key}:({v})" for v in value) + ")"
+
         elif operator in {">", ">=", "<", "<="}:
             if not isinstance(value, (int, float)):
-                raise MarqoDocumentStoreFilterError(f"Value {value} must be int or float for range filters")
+                raise MarqoDocumentStoreFilterError(f"Value {value} must be int, float or iso_date for range filters")
             if operator == ">":
-                return f"{doc_key}:[{value + value * 1e-16} TO *]"
+                return f"{doc_key}:[{value + abs(value) * 1e-16} TO *]"
             elif operator == ">=":
                 return f"{doc_key}:[{value} TO *]"
             elif operator == "<":
-                return f"{doc_key}:[* TO {value - value * 1e-16}]"
+                return f"{doc_key}:[* TO {value - abs(value) * 1e-16}]"
             elif operator == "<=":
                 return f"{doc_key}:[* TO {value}]"
             return None
@@ -263,10 +281,17 @@ class MarqoDocumentStore(DocumentStore):
         custom_vector = {"vector": self._dummy_vector, "content": None}
 
         marqo_doc["_id"] = d.id
+        iso_format_date_keys = []
         for key, value in haystack_doc.items():
             if key == "meta":
                 for key_, value_ in value.items():
                     if value_ is not None:
+                        if isinstance(value_, str):
+                            try:
+                                value_ = datetime.fromisoformat(value_).timestamp()
+                                iso_format_date_keys.append(key_)
+                            except ValueError:
+                                pass
                         marqo_doc["__meta_" + key_] = value_
             elif key == "content": # cannot be None
                 custom_vector["content"] = value
@@ -278,10 +303,16 @@ class MarqoDocumentStore(DocumentStore):
                     encoded = base64.b64encode(binary).decode()
                     marqo_doc["emb_raw"] = encoded
             elif value is not None:
+                if isinstance(value, str):
+                    try:
+                        value = datetime.fromisoformat(value).timestamp()
+                        iso_format_date_keys.append(key)
+                    except ValueError:
+                        pass
                 marqo_doc[key] = value
 
         marqo_doc["content_custom_vector"] = custom_vector
-
+        marqo_doc["iso_format_date_keys"] = iso_format_date_keys
         return marqo_doc
 
     def _get_result_to_documents(self, marqo_documents: List[Dict[str, Any]]) -> List[Document]:
@@ -295,21 +326,24 @@ class MarqoDocumentStore(DocumentStore):
             meta: Dict[str, Any] = {}
             # stored it independently because custom vector didn't return it
             embedding: Dict[str, Any] = {}
+            iso_format_date_keys: List = marqo_doc.pop("iso_format_date_keys", [])
 
-            for k in marqo_doc:
-                if k.startswith("__meta_"):
-                    new_k = k.replace("__meta_", "")
-                    meta[new_k] = marqo_doc[k]
-                elif k == "content_custom_vector":
-                    haystack_doc["content"] = marqo_doc[k]
-                elif k == "_id":
-                    haystack_doc["id"] = marqo_doc[k]
-                elif k == "emb_raw":
-                    embedding[k] = marqo_doc[k]
-                elif k == "_score" or k == "_highlights":
+            for key, value in marqo_doc.items():
+                if key.startswith("__meta_"):
+                    new_k = key.replace("__meta_", "")
+                    if new_k in iso_format_date_keys:
+                        value = datetime.fromtimestamp(value).isoformat()
+                    meta[new_k] = value
+                elif key == "content_custom_vector":
+                    haystack_doc["content"] = value
+                elif key == "_id":
+                    haystack_doc["id"] = value
+                elif key == "emb_raw":
+                    embedding[key] = value
+                elif key == "_score" or key == "_highlights":
                     continue
                 else:
-                    haystack_doc[k] = marqo_doc[k]
+                    haystack_doc[key] = marqo_doc[key]
 
             haystack_doc["meta"] = meta
             if len(embedding) > 0:

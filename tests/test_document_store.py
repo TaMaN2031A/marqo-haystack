@@ -41,7 +41,7 @@ class TestDocumentStore(DocumentStoreBaseTests):
         mq = marqo.Client()
         test_index = "test-haystack-document-store"
         mq.delete_index(test_index)
-        return MarqoDocumentStore(collection_name=test_index)
+        return MarqoDocumentStore(collection_name=test_index, vector_dimension=768)
 
     @pytest.mark.skip(reason="Filter on None is not supported.")
     @pytest.mark.unit
