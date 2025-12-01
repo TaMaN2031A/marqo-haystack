@@ -43,6 +43,14 @@ class TestDocumentStore(DocumentStoreBaseTests):
         mq.delete_index(test_index)
         return MarqoDocumentStore(collection_name=test_index, vector_dimension=768)
 
+    def test_write_documents(self, document_store: DocumentStore):
+        """
+        Test write_documents() default behaviour.
+        """
+        doc = Document(content="test doc")
+        document_store.write_documents([doc])
+        self.assert_documents_are_equal(document_store.filter_documents(), [doc])
+
     @pytest.mark.skip(reason="Filter on None is not supported.")
     @pytest.mark.unit
     def test_comparison_equal_with_none(self, document_store, filterable_docs):

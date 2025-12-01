@@ -140,8 +140,13 @@ class MarqoDocumentStore(DocumentStore):
             op = f["operator"].upper()
             if not isinstance(f["conditions"], list):
                 raise MarqoDocumentStoreFilterError(f"Conditions must be a list, got {f['conditions']}")
-            sub_filters = [self._convert_filters(c) for c in f["conditions"]]
-            return f"({f' {op} '.join(sub_filters)})"
+            if op == "NOT" and len(f["conditions"]) > 1:
+                sub_filters = [f"NOT {self._convert_filters(c)}" for c in f["conditions"]]
+                # Used OR because this is the behaviour expected in the tests
+                return f"({' OR '.join(sub_filters)})"
+            else:
+                sub_filters = [self._convert_filters(c) for c in f["conditions"]]
+                return f"({f' {op} '.join(sub_filters)})"
 
         required_keys = ("field", "operator", "value")
         if not all(k in f for k in required_keys):
