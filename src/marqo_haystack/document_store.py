@@ -10,6 +10,7 @@ import marqo
 from haystack.document_stores.types import DocumentStore, DuplicatePolicy
 from haystack.dataclasses import Document
 from haystack.dataclasses.byte_stream import ByteStream
+from haystack.document_stores.errors import DuplicateDocumentError
 
 from marqo_haystack.errors import MarqoDocumentStoreFilterError
 
@@ -202,7 +203,7 @@ class MarqoDocumentStore(DocumentStore):
         results = [r for r in results if r["_found"]]
         return self._get_result_to_documents(results)
 
-    def write_documents(self, documents: List[Document], policy: DuplicatePolicy = DuplicatePolicy.FAIL) -> int:
+    def write_documents(self, documents: List[Document], policy: DuplicatePolicy = DuplicatePolicy.NONE) -> int:
         """Writes documents into the Marqo index.
 
         Args:
@@ -220,6 +221,15 @@ class MarqoDocumentStore(DocumentStore):
             err = "Please provide a list of Documents."
             raise ValueError(err)
 
+        if len(documents) == 0:
+            return 0
+
+        ids = [d.id for d in documents]
+        existing_docs = self.get_documents_by_id(ids)
+
+        if policy == DuplicatePolicy.FAIL and len(existing_docs) > 0:
+            raise DuplicateDocumentError()
+
         marqo_docs = []
         for d in documents:
             if d.content is None:
@@ -230,12 +240,29 @@ class MarqoDocumentStore(DocumentStore):
                 continue
             d = self._prepare_document(d)
             marqo_docs.append(d)
-        self._index.add_documents(
-            documents=marqo_docs,
-            client_batch_size=self.client_batch_size,
-            mappings={"content_custom_vector": {"type": "custom_vector"}},
-            tensor_fields=["content_custom_vector"]
-        )
+
+        if policy != DuplicatePolicy.SKIP:
+            response = self._index.add_documents(
+                documents=marqo_docs,
+                client_batch_size=self.client_batch_size,
+                mappings={"content_custom_vector": {"type": "custom_vector"}},
+                tensor_fields=["content_custom_vector"]
+            )
+        else:
+            existing_ids = [d.id for d in existing_docs]
+            marqo_docs = [d for d in marqo_docs if d['_id'] not in existing_ids]
+
+            print(marqo_docs)
+            if len(marqo_docs) == 0:
+                return 0
+            response = self._index.add_documents(
+                documents=marqo_docs,
+                client_batch_size=self.client_batch_size,
+                mappings={"content_custom_vector": {"type": "custom_vector"}},
+                tensor_fields=["content_custom_vector"]
+            )
+        print(response)
+        return sum(1 for item in response[0]['items'] if item['status'] == 200)
 
     def delete_documents(self, document_ids: List[str]) -> None:
         """Deletes documents from the index. If the document doesn't exist then it is ignored.
