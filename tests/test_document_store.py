@@ -1,11 +1,9 @@
 from collections import Counter
-from typing import List
 
 import marqo
 import pytest
 from haystack.dataclasses import Document
-from haystack.document_stores.errors import DuplicateDocumentError
-from haystack.document_stores.types import DocumentStore, DuplicatePolicy
+from haystack.document_stores.types import DocumentStore
 from haystack.testing.document_store import DocumentStoreBaseTests
 
 from marqo_haystack.document_store import MarqoDocumentStore
@@ -78,25 +76,17 @@ class TestDocumentStore(DocumentStoreBaseTests):
 
     @pytest.mark.unit
     def test_from_dict(self):
-        dc = {
-            "type": "marqo_haystack.document_store.MarqoDocumentStore",
-            "init_parameters": {
-                "vector_dimension": 768
-            }
-        }
+        dc = {"type": "marqo_haystack.document_store.MarqoDocumentStore", "init_parameters": {"vector_dimension": 768}}
         document_store = MarqoDocumentStore.from_dict(dc)
         assert document_store._vector_dimension == dc["init_parameters"]["vector_dimension"]
 
     @pytest.mark.unit
     def test_to_dict(self):
-        dc = {
-            "type": "marqo_haystack.document_store.MarqoDocumentStore",
-            "init_parameters": {
-                "vector_dimension": 768
-            }
-        }
+        dc = {"type": "marqo_haystack.document_store.MarqoDocumentStore", "init_parameters": {"vector_dimension": 768}}
         document_store = MarqoDocumentStore(vector_dimension=768)
-        assert document_store.to_dict()["init_parameters"]["vector_dimension"] == dc["init_parameters"]["vector_dimension"]
+        assert (
+            document_store.to_dict()["init_parameters"]["vector_dimension"] == dc["init_parameters"]["vector_dimension"]
+        )
 
     @pytest.mark.unit
     def test_from_dict_all_params(self):

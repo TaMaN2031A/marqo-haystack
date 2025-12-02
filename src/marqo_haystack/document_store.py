@@ -1,4 +1,3 @@
-# --- standard library imports ---
 import base64
 import logging
 import random
@@ -6,13 +5,11 @@ import struct
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Union
 
-# --- third-party imports ---
 import marqo
 from haystack import Document, default_from_dict, default_to_dict
 from haystack.document_stores.errors import DuplicateDocumentError
 from haystack.document_stores.types import DocumentStore, DuplicatePolicy
 
-# --- local imports ---
 from marqo_haystack.errors import MarqoDocumentStoreFilterError
 
 logger = logging.getLogger(__name__)
@@ -32,23 +29,20 @@ class MarqoDocumentStore(DocumentStore):
         settings_dict: Optional[Dict[str, Any]] = None,
         client_batch_size: int = 4,
     ):
-        """Initialise the document store.
+        """
+        Initialise a Marqo document store.
 
-            Args:
-                collection_name (str, optional): The name of your collection, known as an 'index'
-                    in Marqo. Defaults to "documents".
-                url (str, optional): The URL for Marqo. If using the cloud, use
-                    https://api.marqo.ai. Defaults to "http://localhost:8882".
-                api_key (Optional[str], optional): Your Marqo Cloud API key (only required for cloud).
-                    Defaults to None.
-                settings_dict (Optional[Dict[str, Any]], optional): A settings dictionary for
-                    creation of the index if running Marqo locally. Defaults to None.
-                client_batch_size (int, optional): The client batch size for adding documents. Set
-                    this higher (16-32) if using a GPU. Defaults to 4.
+        Args:
+            vector_dimension (int): The dimensionality of the vectors stored.
+            collection_name (str, optional): The Marqo collection name. Defaults to "documents".
+            url (str, optional): Marqo server URL. Defaults to "http://localhost:8882".
+            api_key (Optional[str], optional): API key for Marqo Cloud. Defaults to None.
+            settings_dict (Optional[Dict[str, Any]], optional): Optional index settings dictionary for local Marqo.
+                Defaults to None.
+            client_batch_size (int, optional): Batch size for writing documents. Defaults to 4.
 
-            Raises:
-                ValueError: If collection_name is not an existing index and you are using Marqo cloud,
-                    an error will be raised.
+        Raises:
+            ValueError: If the collection does not exist in Marqo Cloud and no API key is provided.
         """
 
         self._vector_dimension = vector_dimension
@@ -63,13 +57,18 @@ class MarqoDocumentStore(DocumentStore):
         self._model_properties = {"type": self._model, "dimensions": self._vector_dimension}
         seed = 42
         random.seed(seed)
-        self._dummy_vector = [random.random() * 0.01 for _ in range(self._vector_dimension)] # nosec
+        # S311: ignoring because it is not suitable for cryptographic purposes
+        self._dummy_vector = [random.random() * 0.01 for _ in range(self._vector_dimension)]  # noqa: S311
 
         indexes = {idx["indexName"] for idx in self._marqo_client.get_indexes()["results"]}
         if self._collection_name not in indexes:
             if not api_key:
-                self._marqo_client.create_index(self._collection_name, model=self._model,
-                                      model_properties=self._model_properties, settings_dict=settings_dict)
+                self._marqo_client.create_index(
+                    self._collection_name,
+                    model=self._model,
+                    model_properties=self._model_properties,
+                    settings_dict=settings_dict,
+                )
             else:
                 error_msg = (
                     "If using this integration with Marqo Cloud you must create your index ahead of time, "
@@ -81,30 +80,36 @@ class MarqoDocumentStore(DocumentStore):
 
         self._index = self._marqo_client.index(self._collection_name)
 
-
     def count_documents(self) -> int:
         """
-        Returns how many documents are present in the document store.
+        Return the number of documents currently stored in the Marqo index.
+
+        Returns:
+            int: Number of documents in the collection.
         """
         return self._index.get_stats()["numberOfDocuments"]
 
     def count_vectors(self) -> int:
         """
-        Returns how many vectors are present in the document store.
+        Return the number of vectors currently stored in the Marqo index.
+
+        Returns:
+            int: Number of vectors in the collection.
         """
         return self._index.get_stats()["numberOfVectors"]
 
     def filter_documents(self, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        """Returns at most 1,000 documents that match the filter
+        """
+        Retrieve up to 1000 documents matching the given filters.
 
         Args:
-            filters (Optional[Dict[str, Any]], optional): Filters to apply. Defaults to None.
+            filters (Optional[Dict[str, Any]]): Dictionary specifying filter conditions.
 
         Raises:
-            MarqoDocumentStoreFilterError: If the filter is invalid or not supported by this class.
+            MarqoDocumentStoreFilterError: If the filters are invalid or unsupported.
 
         Returns:
-            List[Document]: A list of matching documents.
+            List[Document]: List of matching Haystack Document objects.
         """
 
         if not isinstance(filters, dict) and filters is not None:
@@ -113,9 +118,7 @@ class MarqoDocumentStore(DocumentStore):
 
         filter_string = self._convert_filters(filters)
         results = self._index.search(
-            {"customVector": {"content": "", "vector": self._dummy_vector}},
-            filter_string=filter_string,
-            limit=1000
+            {"customVector": {"content": "", "vector": self._dummy_vector}}, filter_string=filter_string, limit=1000
         )
         hits = []
         for r in results["hits"]:
@@ -126,11 +129,24 @@ class MarqoDocumentStore(DocumentStore):
 
     def _escape_special_filter(self, filter_value: Union[str, List[str]]) -> Union[str, List[str]]:
         """
-        Escape special characters in filter values
+        Escape special characters in a filter string or list of filter strings.
+
+        Args:
+            filter_value (Union[str, List[str]]): Filter value(s) to escape.
+
+        Returns:
+            Union[str, List[str]]: Escaped filter value(s), preserving the input type.
         """
         special_chars = {"+", "-", "&&", "||", "!", "(", ")", "{", "}", "[", "]", "^", '"', "~", "*", "?", ":", "\\"}
         if isinstance(filter_value, list):
-            return [self._escape_special_filter(v) for v in filter_value]
+            escaped_list: List[str] = []
+            for v in filter_value:
+                ev = self._escape_special_filter(v)
+                if isinstance(ev, list):
+                    escaped_list.extend(ev)
+                else:
+                    escaped_list.append(ev)
+            return escaped_list
 
         if not isinstance(filter_value, str):
             return filter_value
@@ -140,9 +156,20 @@ class MarqoDocumentStore(DocumentStore):
                 filter_value = filter_value.replace(c, f"\\{c}")
         return filter_value
 
-    def _convert_filters(self, f: dict) -> str | None:
+    def _convert_filters(self, f: Optional[Dict[str, Any]] = None) -> str | None:
         """
-        Convert haystack filters to marqo filter string capturing all boolean operators
+        Convert a Haystack filter dictionary into a Marqo filter string.
+
+        Handles nested boolean operators (AND, OR, NOT) and range filters.
+
+        Args:
+            f (Optional[Dict[str, Any]]): Filter dictionary in Haystack format.
+
+        Raises:
+            MarqoDocumentStoreFilterError: If the filter is invalid, missing keys, or has unsupported operators.
+
+        Returns:
+            Optional[str]: Marqo-compatible filter string, or None if no filter is provided.
         """
         if f is None or f == {}:
             return None
@@ -157,7 +184,7 @@ class MarqoDocumentStore(DocumentStore):
                 # Used OR because this is the behaviour expected in the tests
                 return f"({' OR '.join(sub_filters)})"
             else:
-                sub_filters = [self._convert_filters(c) for c in f["conditions"]]
+                sub_filters = [s for s in (self._convert_filters(c) for c in f["conditions"]) if s is not None]
                 return f"({f' {op} '.join(sub_filters)})"
 
         required_keys = ("field", "operator", "value")
@@ -171,7 +198,7 @@ class MarqoDocumentStore(DocumentStore):
         doc_key = "__meta_" + field.split("meta.")[1] if field.startswith("meta.") else field
 
         if value is None:
-            msg = f"Value cannot be None"
+            msg = "Value cannot be None"
             raise MarqoDocumentStoreFilterError(msg)
         # try to parse isoformat dates
         if isinstance(value, str):
@@ -213,21 +240,32 @@ class MarqoDocumentStore(DocumentStore):
 
     def get_documents_by_id(self, ids: List[str]) -> List[Document]:
         """
-        Returns documents with given ids.
+        Retrieve documents by their IDs.
+
+        Args:
+            ids (List[str]): List of document IDs to fetch.
+
+        Returns:
+            List[Document]: List of matching Document objects.
         """
         results = self._index.get_documents(document_ids=ids)["results"]
         results = [r for r in results if r["_found"]]
         return self._get_result_to_documents(results)
 
     def write_documents(self, documents: List[Document], policy: DuplicatePolicy = DuplicatePolicy.NONE) -> int:
-        """Writes documents into the Marqo index.
+        """
+        Add documents to the Marqo index.
 
         Args:
-            documents (List[Document]): A list of documents to add
-            policy (DuplicatePolicy, optional): Not used, ignore.
+            documents (List[Document]): List of documents to write.
+            policy (DuplicatePolicy, optional): Controls behavior on duplicates. Defaults to NONE.
 
         Raises:
-            ValueError: If the documents are not a list of the Document object.
+            ValueError: If the input is not a list of Document objects.
+            DuplicateDocumentError: If policy is FAIL and duplicates exist.
+
+        Returns:
+            int: Number of documents successfully written.
         """
         if (
             not isinstance(documents, Iterable)
@@ -240,6 +278,7 @@ class MarqoDocumentStore(DocumentStore):
         if len(documents) == 0:
             return 0
 
+        ok = 200
         ids = [d.id for d in documents]
         existing_docs = self.get_documents_by_id(ids)
 
@@ -247,15 +286,12 @@ class MarqoDocumentStore(DocumentStore):
             raise DuplicateDocumentError()
 
         marqo_docs = []
-        for d in documents:
-            if d.content is None:
-                logger.warning(
-                    f"Document {d.id} has no content. "
-                    "This document will be skipped"
-                )
+        for doc in documents:
+            if doc.content is None:
+                logger.warning(f"Document {doc.id} has no content. This document will be skipped")
                 continue
-            d = self._prepare_document(d)
-            marqo_docs.append(d)
+            prepared_doc = self._prepare_document(doc)
+            marqo_docs.append(prepared_doc)
 
         if policy == DuplicatePolicy.SKIP:
             existing_ids = [d.id for d in existing_docs]
@@ -267,30 +303,32 @@ class MarqoDocumentStore(DocumentStore):
             documents=marqo_docs,
             client_batch_size=self._client_batch_size,
             mappings={"content_custom_vector": {"type": "custom_vector"}},
-            tensor_fields=["content_custom_vector"]
+            tensor_fields=["content_custom_vector"],
         )
-        return sum(1 for item in response[0]["items"] if item["status"] == 200)
+        return sum(1 for item in response[0]["items"] if item["status"] == ok)
 
     def delete_documents(self, document_ids: List[str]) -> None:
-        """Deletes documents from the index. If the document doesn't exist then it is ignored.
+        """
+        Delete documents from the Marqo index by ID.
 
         Args:
-            document_ids (List[str]): A list of document IDs to delete.
+            document_ids (List[str]): List of document IDs to delete.
         """
         self._index.delete_documents(ids=document_ids)
 
     def search(
         self, queries: List[Union[str, List[float]]], top_k: int, filters: Optional[Dict[str, Any]] = None
     ) -> List[List[Document]]:
-        """Perform a search for a list of queries.
+        """
+        Perform vector or text search for multiple queries.
 
         Args:
-            queries (List[Union[str, Dict[str, float]]]): A list of queries.
-            top_k (int): The number of results to return.
-            filters (Optional[Dict[str, Any]], optional): Filters to apply during search. Defaults to None.
+            queries (List[Union[str, List[float]]]): Text queries or vector embeddings.
+            top_k (int): Number of results to return per query.
+            filters (Optional[Dict[str, Any]]): Optional filters to apply during search.
 
         Returns:
-            List[List[Document]]: A list of matching documents for each query.
+            List[List[Document]]: List of results for each query.
         """
         results = []
         for query_or_query_embedding in queries:
@@ -298,13 +336,13 @@ class MarqoDocumentStore(DocumentStore):
                 result = self._index.search(
                     q={"content": query_or_query_embedding, "vector": self._dummy_vector},
                     limit=top_k,
-                    filter_string=self._convert_filters(filters)
+                    filter_string=self._convert_filters(filters),
                 )
             else:
                 result = self._index.search(
                     q={"content": "", "vector": query_or_query_embedding},
                     limit=top_k,
-                    filter_string=self._convert_filters(filters)
+                    filter_string=self._convert_filters(filters),
                 )
 
             results.append(result)
@@ -312,7 +350,12 @@ class MarqoDocumentStore(DocumentStore):
         return self._query_result_to_documents(results)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serializes this store to a dictionary."""
+        """
+        Serialize this document store into a dictionary.
+
+        Returns:
+            Dict[str, Any]: Serialized representation of the store.
+        """
         data = default_to_dict(
             self,
             vector_dimension=self._vector_dimension,
@@ -326,12 +369,29 @@ class MarqoDocumentStore(DocumentStore):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MarqoDocumentStore":
-        """Deserializes the store from a dictionary."""
+        """
+        Deserialize a document store from a dictionary.
+
+        Args:
+            data (Dict[str, Any]): Dictionary containing store parameters.
+
+        Returns:
+            MarqoDocumentStore: A new store instance.
+        """
         return default_from_dict(cls, data)
 
     def _prepare_document(self, d: Document) -> Dict[str, Any]:
         """
-        Change the document in a way we can better store it into Marqo.
+        Convert a Haystack Document into a Marqo-storable dictionary.
+
+        Embeddings are converted to base64 strings, and metadata is flattened
+        with ISO-format date fields converted to timestamps.
+
+        Args:
+            d (Document): Document to prepare.
+
+        Returns:
+            Dict[str, Any]: Document ready for storage in Marqo.
         """
         marqo_doc = {}
         haystack_doc = d.to_dict(flatten=False)
@@ -343,14 +403,15 @@ class MarqoDocumentStore(DocumentStore):
             if key == "meta":
                 for key_, value_ in value.items():
                     if value_ is not None:
+                        written_value_ = value_
                         if isinstance(value_, str):
                             try:
-                                value_ = datetime.fromisoformat(value_).timestamp()
+                                written_value_ = datetime.fromisoformat(value_).timestamp()
                                 iso_format_date_keys.append(key_)
                             except ValueError:
                                 pass
-                        marqo_doc["__meta_" + key_] = value_
-            elif key == "content": # cannot be None
+                        marqo_doc["__meta_" + key_] = written_value_
+            elif key == "content":  # cannot be None
                 custom_vector["content"] = value
             elif key == "embedding":
                 if value is not None:
@@ -360,12 +421,6 @@ class MarqoDocumentStore(DocumentStore):
                     encoded = base64.b64encode(binary).decode()
                     marqo_doc["emb_raw"] = encoded
             elif value is not None:
-                if isinstance(value, str):
-                    try:
-                        value = datetime.fromisoformat(value).timestamp()
-                        iso_format_date_keys.append(key)
-                    except ValueError:
-                        pass
                 marqo_doc[key] = value
 
         marqo_doc["content_custom_vector"] = custom_vector
@@ -374,7 +429,13 @@ class MarqoDocumentStore(DocumentStore):
 
     def _get_result_to_documents(self, marqo_documents: List[Dict[str, Any]]) -> List[Document]:
         """
-        Helper function to convert Marqo results into Haystack Documents
+        Convert a list of Marqo documents into Haystack Document objects.
+
+        Args:
+            marqo_documents (List[Dict[str, Any]]): Raw Marqo results.
+
+        Returns:
+            List[Document]: List of Haystack Documents.
         """
         documents = []
         for marqo_doc in marqo_documents:
@@ -388,19 +449,20 @@ class MarqoDocumentStore(DocumentStore):
             for key, value in marqo_doc.items():
                 if key.startswith("__meta_"):
                     new_k = key.replace("__meta_", "")
+                    written_value = value
                     if new_k in iso_format_date_keys:
-                        value = datetime.fromtimestamp(value).isoformat()
-                    meta[new_k] = value
+                        written_value = datetime.fromtimestamp(value).isoformat()  # noqa: DTZ006
+                    meta[new_k] = written_value
                 elif key == "content_custom_vector":
                     haystack_doc["content"] = value
                 elif key == "_id":
                     haystack_doc["id"] = value
                 elif key == "emb_raw":
                     embedding[key] = value
-                elif key == "_score" or key == "_highlights":
+                elif key in {"_score", "_highlights"}:
                     continue
                 else:
-                    haystack_doc[key] = marqo_doc[key]
+                    haystack_doc[key] = value
 
             haystack_doc["meta"] = meta
             if len(embedding) > 0:
@@ -411,13 +473,20 @@ class MarqoDocumentStore(DocumentStore):
 
         return documents
 
-    def _query_result_to_documents(self, result: Dict[str, Any]) -> List[List[Document]]:
+    def _query_result_to_documents(self, result: List[Dict[str, Any]]) -> List[List[Document]]:
         """
-        Helper function to convert Marqo results into Haystack Documents
+        Convert search results from multiple queries into Haystack Documents.
+
+        Args:
+            result (List[Dict[str, Any]]): Raw Marqo search results per query.
+
+        Returns:
+            List[List[Document]]: Documents grouped per query.
         """
         retrievals = []
 
         for r in result:
-            converted_hits = self._get_result_to_documents(r["hits"])
+            hits: List[Dict[str, Any]] = r["hits"]
+            converted_hits = self._get_result_to_documents(hits)
             retrievals.append(converted_hits)
         return retrievals

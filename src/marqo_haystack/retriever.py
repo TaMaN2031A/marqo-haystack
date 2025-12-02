@@ -1,6 +1,8 @@
 from typing import Any, Dict, List, Optional, Union
+
+from haystack import component
 from haystack.dataclasses import Document
-from haystack import Document, component
+
 from marqo_haystack import MarqoDocumentStore
 
 
@@ -16,7 +18,8 @@ class MarqoRetriever:
 
         Args:
             document_store (MarqoDocumentStore): An instance of a MarqoDocumentStore
-            filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space. Defaults to None.
+            filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space.
+            Defaults to None.
             top_k (int, optional):
         """
         self.filters = filters
@@ -24,12 +27,18 @@ class MarqoRetriever:
         self.document_store = document_store
 
     @component.output_types(documents=List[List[Document]])
-    def run(self, queries: List[Union[str | List[float]]], filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None):
+    def run(
+        self,
+        queries: List[Union[str | List[float]]],
+        filters: Optional[Dict[str, Any]] = None,
+        top_k: Optional[int] = None,
+    ):
         """Run the retriever on the given list of queries.
 
         Args:
             queries (List[str]): An input list of queries
-            filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space. Defaults to None.
+            filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space.
+            Defaults to None.
             top_k (Optional[int], optional): The maximum number of documents to retrieve. Defaults to None.
         """
 
@@ -53,7 +62,8 @@ class MarqoSingleRetriever(MarqoRetriever):
 
         Args:
             query (str): An input query
-            filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space. Defaults to None.
+            filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space.
+            Defaults to None.
             top_k (Optional[int], optional): The maximum number of documents to retrieve. Defaults to None.
         """
         return {"documents": super().run([query], filters, top_k)["documents"][0]}
