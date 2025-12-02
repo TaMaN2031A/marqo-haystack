@@ -1,9 +1,8 @@
+from collections import Counter
 from typing import List
 
-import pytest
 import marqo
-from collections import Counter
-
+import pytest
 from haystack.dataclasses import Document
 from haystack.document_stores.errors import DuplicateDocumentError
 from haystack.document_stores.types import DocumentStore, DuplicatePolicy
@@ -77,154 +76,90 @@ class TestDocumentStore(DocumentStoreBaseTests):
     def test_comparison_less_than_equal_with_none(self, document_store, filterable_docs):
         pass
 
-
-    """
     @pytest.mark.unit
-    def test_get_existing(self, document_store: MarqoDocumentStore):
-        #Deleting an existing document
-        doc = Document(content="test doc")
-        document_store.write_documents([doc])
-
-        gotten_docs = document_store.get_documents_by_id(ids=[doc.id])
-        assert len(gotten_docs) == 1
-
-        document_store.delete_documents([doc.id])
+    def test_from_dict(self):
+        dc = {
+            "type": "marqo_haystack.document_store.MarqoDocumentStore",
+            "init_parameters": {
+                "vector_dimension": 768
+            }
+        }
+        document_store = MarqoDocumentStore.from_dict(dc)
+        assert document_store._vector_dimension == dc["init_parameters"]["vector_dimension"]
 
     @pytest.mark.unit
-    def test_search_documents(self, document_store: MarqoDocumentStore):
-        #Searching documents
-        doc = Document(id="mydoc", content="test1 test2")
-        document_store.write_documents([doc])
+    def test_to_dict(self):
+        dc = {
+            "type": "marqo_haystack.document_store.MarqoDocumentStore",
+            "init_parameters": {
+                "vector_dimension": 768
+            }
+        }
+        document_store = MarqoDocumentStore(vector_dimension=768)
+        assert document_store.to_dict()["init_parameters"]["vector_dimension"] == dc["init_parameters"]["vector_dimension"]
 
-        documents = document_store.search(queries=["test1", "test2"], top_k=10)
-        assert len(documents) == 2
-        assert len(documents[0]) <= 10
-        assert len(documents[1]) <= 10
-        document_store.delete_documents([doc.id])
-
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
     @pytest.mark.unit
-    def test_eq_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+    def test_from_dict_all_params(self):
+        dc = {
+            "type": "marqo_haystack.document_store.MarqoDocumentStore",
+            "init_parameters": {
+                "vector_dimension": 768,
+                "collection_name": "my_collection",
+                "url": "http://localhost:8882",
+                "api_key": None,
+                "settings_dict": None,
+                "client_batch_size": 16,
+            },
+        }
 
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
-    @pytest.mark.unit
-    def test_in_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+        ds = MarqoDocumentStore.from_dict(dc)
 
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
-    @pytest.mark.unit
-    def test_ne_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+        assert ds._vector_dimension == 768
+        assert ds._collection_name == "my_collection"
+        assert ds._url == "http://localhost:8882"
+        assert ds._api_key is None
+        assert ds._settings_dict is None
+        assert ds._client_batch_size == 16
 
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
     @pytest.mark.unit
-    def test_nin_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+    def test_to_dict_all_params(self):
+        ds = MarqoDocumentStore(
+            vector_dimension=768,
+            collection_name="my_collection",
+            url="http://localhost:8882",
+            api_key=None,
+            settings_dict=None,
+            client_batch_size=16,
+        )
 
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
-    @pytest.mark.unit
-    def test_gt_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+        dc = ds.to_dict()
 
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
-    @pytest.mark.unit
-    def test_gte_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+        params = dc["init_parameters"]
 
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
-    @pytest.mark.unit
-    def test_lt_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+        assert params["vector_dimension"] == 768
+        assert params["collection_name"] == "my_collection"
+        assert params["url"] == "http://localhost:8882"
+        assert params["api_key"] is None
+        assert params["settings_dict"] is None
+        assert params["client_batch_size"] == 16
 
-    @pytest.mark.skip(reason="Filter on embedding value is not supported.")
     @pytest.mark.unit
-    def test_lte_filter_embedding(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+    def test_to_from_dict_all_params_combined(self):
+        original = MarqoDocumentStore(
+            vector_dimension=768,
+            collection_name="my_collection",
+            url="http://localhost:8882",
+            api_key=None,
+            settings_dict=None,
+            client_batch_size=16,
+        )
 
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_eq_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
+        serialized = original.to_dict()
+        restored = MarqoDocumentStore.from_dict(serialized)
 
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_in_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_ne_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_nin_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_gt_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_gte_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_lt_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Filter on table value is not supported.")
-    @pytest.mark.unit
-    def test_lte_filter_table(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Range query on non-numeric value is not supported.")
-    @pytest.mark.unit
-    def test_gt_filter_non_numeric(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Range query on non-numeric value is not supported.")
-    @pytest.mark.unit
-    def test_gte_filter_non_numeric(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Range query on non-numeric value is not supported.")
-    @pytest.mark.unit
-    def test_lt_filter_non_numeric(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Range query on non-numeric value is not supported.")
-    @pytest.mark.unit
-    def test_lte_filter_non_numeric(self, document_store: MarqoDocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Duplicate policy not supported.")
-    @pytest.mark.unit
-    def test_write_documents_duplicate_fail(self, document_store: MarqoDocumentStore):
-        pass
-
-    @pytest.mark.skip(reason="Duplicate policy not supported.")
-    @pytest.mark.unit
-    def test_write_documents_duplicate_skip(self, document_store: MarqoDocumentStore):
-        pass
-
-    @pytest.mark.skip(reason="Duplicate policy not supported.")
-    @pytest.mark.unit
-    def test_write_documents_duplicate_overwrite(self, document_store: MarqoDocumentStore):
-        pass
-
-    @pytest.mark.skip(reason="Filter on array contents is not supported.")
-    @pytest.mark.unit
-    def test_filter_document_array(self, document_store: DocumentStore, filterable_docs: List[Document]):
-        pass
-
-    @pytest.mark.skip(reason="Filter on dataframe is not supported.")
-    @pytest.mark.unit
-    def test_filter_document_dataframe(self, document_store: DocumentStore, filterable_docs: List[Document]):
-        pass
-    
-    """
+        assert restored._vector_dimension == original._vector_dimension
+        assert restored._collection_name == original._collection_name
+        assert restored._url == original._url
+        assert restored._api_key == original._api_key
+        assert restored._settings_dict == original._settings_dict
+        assert restored._client_batch_size == original._client_batch_size

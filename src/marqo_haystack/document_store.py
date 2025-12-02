@@ -1,17 +1,18 @@
+# --- standard library imports ---
 import base64
-from datetime import datetime
 import logging
-import struct
-from typing import Any, Dict, List, Optional, Union, Iterable
-import math
 import random
+import struct
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Union
 
+# --- third-party imports ---
 import marqo
-from haystack.document_stores.types import DocumentStore, DuplicatePolicy
-from haystack.dataclasses import Document
-from haystack.dataclasses.byte_stream import ByteStream
+from haystack import Document, default_from_dict, default_to_dict
 from haystack.document_stores.errors import DuplicateDocumentError
+from haystack.document_stores.types import DocumentStore, DuplicatePolicy
 
+# --- local imports ---
 from marqo_haystack.errors import MarqoDocumentStoreFilterError
 
 logger = logging.getLogger(__name__)
@@ -31,44 +32,54 @@ class MarqoDocumentStore(DocumentStore):
         settings_dict: Optional[Dict[str, Any]] = None,
         client_batch_size: int = 4,
     ):
-        """Initialise the document store
+        """Initialise the document store.
 
-        Args:
-            collection_name (str, optional): The name of your collection, known as an 'index' in Marqo. Defaults to "documents".
-            url (_type_, optional): The URL for Marqo, if using the cloud then use https://api.marqo.ai. Defaults to "http://localhost:8882".
-            api_key (Optional[str], optional): Your Marqo Cloud API key (only required for cloud). Defaults to None.
-            settings_dict (Optional[Dict[str, Any]], optional): A settings dictionary for creation of the index if running Marqo locally. Defaults to None.
-            client_batch_size (int, optional): The client batch size for adding documents, set this higher (16-32) if using a GPU. Defaults to 4.
+            Args:
+                collection_name (str, optional): The name of your collection, known as an 'index'
+                    in Marqo. Defaults to "documents".
+                url (str, optional): The URL for Marqo. If using the cloud, use
+                    https://api.marqo.ai. Defaults to "http://localhost:8882".
+                api_key (Optional[str], optional): Your Marqo Cloud API key (only required for cloud).
+                    Defaults to None.
+                settings_dict (Optional[Dict[str, Any]], optional): A settings dictionary for
+                    creation of the index if running Marqo locally. Defaults to None.
+                client_batch_size (int, optional): The client batch size for adding documents. Set
+                    this higher (16-32) if using a GPU. Defaults to 4.
 
-        Raises:
-            ValueError: If collection_name is not an existing index and you are using Marqo cloud then an error will be raised.
+            Raises:
+                ValueError: If collection_name is not an existing index and you are using Marqo cloud,
+                    an error will be raised.
         """
+
         self._vector_dimension = vector_dimension
+        self._url = url
+        self._api_key = api_key
         self._marqo_client = marqo.Client(url=url, api_key=api_key)
-        self.client_batch_size = client_batch_size
-        self._collection = collection_name
+        self._client_batch_size = client_batch_size
+        self._collection_name = collection_name
         self._settings_dict = settings_dict
         # A document store will receive embedding if any, but it is not to create it
         self._model = "no_model"
         self._model_properties = {"type": self._model, "dimensions": self._vector_dimension}
         seed = 42
         random.seed(seed)
-        self._dummy_vector = [random.random() * 0.01 for _ in range(self._vector_dimension)]
+        self._dummy_vector = [random.random() * 0.01 for _ in range(self._vector_dimension)] # nosec
 
         indexes = {idx["indexName"] for idx in self._marqo_client.get_indexes()["results"]}
-        if self._collection not in indexes:
+        if self._collection_name not in indexes:
             if not api_key:
-               # self._marqo_client.create_index(self._collection, settings_dict=settings_dict)
-                self._marqo_client.create_index(self._collection, model=self._model,
+                self._marqo_client.create_index(self._collection_name, model=self._model,
                                       model_properties=self._model_properties, settings_dict=settings_dict)
             else:
-                raise ValueError(
-                    "If using this integration with Marqo Cloud you must create your index ahead of time, specify your index name as the collection_name in the MarqoDocumentStore constructor."
+                error_msg = (
+                    "If using this integration with Marqo Cloud you must create your index ahead of time, "
+                    "specify your index name as the collection_name in the MarqoDocumentStore constructor."
                 )
+                raise ValueError(error_msg)
         else:
-            print(f"Index {self._collection} already exists, skipping index creation.")
+            logger.info("Index %s already exists, skipping index creation.", self._collection_name)
 
-        self._index = self._marqo_client.index(self._collection)
+        self._index = self._marqo_client.index(self._collection_name)
 
 
     def count_documents(self) -> int:
@@ -101,7 +112,6 @@ class MarqoDocumentStore(DocumentStore):
             raise MarqoDocumentStoreFilterError(msg)
 
         filter_string = self._convert_filters(filters)
-        print("Filter string: ", filter_string)
         results = self._index.search(
             {"customVector": {"content": "", "vector": self._dummy_vector}},
             filter_string=filter_string,
@@ -140,7 +150,8 @@ class MarqoDocumentStore(DocumentStore):
         if "operator" in f and "conditions" in f:
             op = f["operator"].upper()
             if not isinstance(f["conditions"], list):
-                raise MarqoDocumentStoreFilterError(f"Conditions must be a list, got {f['conditions']}")
+                msg = f"Conditions must be a list, got {f['conditions']}"
+                raise MarqoDocumentStoreFilterError(msg)
             if op == "NOT" and len(f["conditions"]) > 1:
                 sub_filters = [f"NOT {self._convert_filters(c)}" for c in f["conditions"]]
                 # Used OR because this is the behaviour expected in the tests
@@ -151,7 +162,8 @@ class MarqoDocumentStore(DocumentStore):
 
         required_keys = ("field", "operator", "value")
         if not all(k in f for k in required_keys):
-            raise MarqoDocumentStoreFilterError(f"Condition is missing one of the keys: {f}")
+            msg = f"Condition is missing one of the keys: {f}"
+            raise MarqoDocumentStoreFilterError(msg)
 
         field = f["field"]
         operator = f["operator"]
@@ -159,7 +171,8 @@ class MarqoDocumentStore(DocumentStore):
         doc_key = "__meta_" + field.split("meta.")[1] if field.startswith("meta.") else field
 
         if value is None:
-            raise MarqoDocumentStoreFilterError(f"Value cannot be None for {operator} operator")
+            msg = f"Value cannot be None"
+            raise MarqoDocumentStoreFilterError(msg)
         # try to parse isoformat dates
         if isinstance(value, str):
             try:
@@ -173,7 +186,8 @@ class MarqoDocumentStore(DocumentStore):
             return f"NOT {doc_key}:({value})"
         elif operator in {"in", "not in"}:
             if not isinstance(value, list):
-                raise MarqoDocumentStoreFilterError(f"Value {value} must be a list for '{operator}' operator")
+                msg = f"Value {value} must be a list for '{operator}' operator"
+                raise MarqoDocumentStoreFilterError(msg)
 
             if operator == "in":
                 return "(" + " OR ".join(f"{doc_key}:({v})" for v in value) + ")"
@@ -182,7 +196,8 @@ class MarqoDocumentStore(DocumentStore):
 
         elif operator in {">", ">=", "<", "<="}:
             if not isinstance(value, (int, float)):
-                raise MarqoDocumentStoreFilterError(f"Value {value} must be int, float or iso_date for range filters")
+                msg = f"Value {value} must be int, float or iso_date for range filters"
+                raise MarqoDocumentStoreFilterError(msg)
             if operator == ">":
                 return f"{doc_key}:[{value + abs(value) * 1e-16} TO *]"
             elif operator == ">=":
@@ -193,7 +208,8 @@ class MarqoDocumentStore(DocumentStore):
                 return f"{doc_key}:[* TO {value}]"
             return None
         else:
-            raise MarqoDocumentStoreFilterError(f"Unsupported operator {operator}")
+            msg = f"Unsupported operator {operator}"
+            raise MarqoDocumentStoreFilterError(msg)
 
     def get_documents_by_id(self, ids: List[str]) -> List[Document]:
         """
@@ -241,28 +257,19 @@ class MarqoDocumentStore(DocumentStore):
             d = self._prepare_document(d)
             marqo_docs.append(d)
 
-        if policy != DuplicatePolicy.SKIP:
-            response = self._index.add_documents(
-                documents=marqo_docs,
-                client_batch_size=self.client_batch_size,
-                mappings={"content_custom_vector": {"type": "custom_vector"}},
-                tensor_fields=["content_custom_vector"]
-            )
-        else:
+        if policy == DuplicatePolicy.SKIP:
             existing_ids = [d.id for d in existing_docs]
-            marqo_docs = [d for d in marqo_docs if d['_id'] not in existing_ids]
-
-            print(marqo_docs)
+            marqo_docs = [d for d in marqo_docs if d["_id"] not in existing_ids]
             if len(marqo_docs) == 0:
                 return 0
-            response = self._index.add_documents(
-                documents=marqo_docs,
-                client_batch_size=self.client_batch_size,
-                mappings={"content_custom_vector": {"type": "custom_vector"}},
-                tensor_fields=["content_custom_vector"]
-            )
-        print(response)
-        return sum(1 for item in response[0]['items'] if item['status'] == 200)
+
+        response = self._index.add_documents(
+            documents=marqo_docs,
+            client_batch_size=self._client_batch_size,
+            mappings={"content_custom_vector": {"type": "custom_vector"}},
+            tensor_fields=["content_custom_vector"]
+        )
+        return sum(1 for item in response[0]["items"] if item["status"] == 200)
 
     def delete_documents(self, document_ids: List[str]) -> None:
         """Deletes documents from the index. If the document doesn't exist then it is ignored.
@@ -304,6 +311,24 @@ class MarqoDocumentStore(DocumentStore):
 
         return self._query_result_to_documents(results)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes this store to a dictionary."""
+        data = default_to_dict(
+            self,
+            vector_dimension=self._vector_dimension,
+            collection_name=self._collection_name,
+            url=self._url,
+            api_key=self._api_key,
+            settings_dict=self._settings_dict,
+            client_batch_size=self._client_batch_size,
+        )
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MarqoDocumentStore":
+        """Deserializes the store from a dictionary."""
+        return default_from_dict(cls, data)
+
     def _prepare_document(self, d: Document) -> Dict[str, Any]:
         """
         Change the document in a way we can better store it into Marqo.
@@ -331,7 +356,7 @@ class MarqoDocumentStore(DocumentStore):
                 if value is not None:
                     custom_vector["vector"] = value
                     # Not redundant, didn't find a way to make marqo return the embeddings of the custom vector
-                    binary = struct.pack(f'{self._vector_dimension}f', *value)
+                    binary = struct.pack(f"{self._vector_dimension}f", *value)
                     encoded = base64.b64encode(binary).decode()
                     marqo_doc["emb_raw"] = encoded
             elif value is not None:
@@ -380,7 +405,7 @@ class MarqoDocumentStore(DocumentStore):
             haystack_doc["meta"] = meta
             if len(embedding) > 0:
                 decoded = base64.b64decode(embedding["emb_raw"])
-                vector = list(struct.unpack(f'{self._vector_dimension}f', decoded))
+                vector = list(struct.unpack(f"{self._vector_dimension}f", decoded))
                 haystack_doc["embedding"] = vector
             documents.append(Document().from_dict(haystack_doc))
 
