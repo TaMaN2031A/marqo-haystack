@@ -122,7 +122,7 @@ class MarqoDocumentStore(DocumentStore):
         )
         hits = []
         for r in results["hits"]:
-         #   r.pop("_score")
+            #   r.pop("_score")
             hits.append(r)
 
         return self._get_result_to_documents(hits)

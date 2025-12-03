@@ -65,7 +65,7 @@ class MarqoRetriever:
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LanceDBFTSRetriever":
+    def from_dict(cls, data: Dict[str, Any]) -> "MarqoRetriever":
         """
         Deserialize this component from a dictionary.
         """
