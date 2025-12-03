@@ -122,7 +122,7 @@ class MarqoDocumentStore(DocumentStore):
         )
         hits = []
         for r in results["hits"]:
-            r.pop("_score")
+         #   r.pop("_score")
             hits.append(r)
 
         return self._get_result_to_documents(hits)
@@ -452,8 +452,10 @@ class MarqoDocumentStore(DocumentStore):
                     haystack_doc["id"] = value
                 elif key == "emb_raw":
                     embedding[key] = value
-                elif key in {"_score", "_highlights"}:
+                elif key == "_highlights":
                     continue
+                elif key == "_score":
+                    haystack_doc["score"] = value
                 else:
                     haystack_doc[key] = value
 

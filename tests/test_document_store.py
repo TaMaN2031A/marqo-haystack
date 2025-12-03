@@ -24,6 +24,8 @@ class TestDocumentStore(DocumentStoreBaseTests):
         a score to returned Documents. Since we can't know what the score will be, we can't compare
         the Documents reliably.
         """
+        for doc in received:
+            doc.score = None # When we store it, it doesn't have this attribute
         received_dicts = [d.to_dict(flatten=True) if hasattr(d, "to_dict") else d for d in received]
         expected_dicts = [d.to_dict(flatten=True) if hasattr(d, "to_dict") else d for d in expected]
 
