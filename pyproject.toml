@@ -32,6 +32,9 @@ Documentation = "https://github.com/marqo-ai/marqo-haystack#readme"
 Issues = "https://github.com/marqo-ai/marqo-haystack/issues"
 Source = "https://github.com/marqo-ai/marqo-haystack"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/haystack_integrations"]
+
 [tool.hatch.version]
 path = "src/marqo_haystack/__about__.py"
 
@@ -135,7 +138,6 @@ unfixable = [
   # Don't touch unused imports
   "F401",
 ]
-exclude = ["example"]
 
 [tool.ruff.isort]
 known-first-party = ["marqo_haystack"]
