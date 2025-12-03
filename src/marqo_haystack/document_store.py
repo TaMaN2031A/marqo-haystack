@@ -317,37 +317,30 @@ class MarqoDocumentStore(DocumentStore):
         self._index.delete_documents(ids=document_ids)
 
     def search(
-        self, queries: List[Union[str, List[float]]], top_k: int, filters: Optional[Dict[str, Any]] = None
-    ) -> List[List[Document]]:
+        self, query: Union[str, List[float]], top_k: int, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform vector or text search for multiple queries.
 
         Args:
-            queries (List[Union[str, List[float]]]): Text queries or vector embeddings.
-            top_k (int): Number of results to return per query.
+            query (Union[str, List[float]]): Query text or its vector embedding.
+            top_k (int): Number of results to return.
             filters (Optional[Dict[str, Any]]): Optional filters to apply during search.
 
         Returns:
-            List[List[Document]]: List of results for each query.
+            List[Document]: List of results for the query.
         """
-        results = []
-        for query_or_query_embedding in queries:
-            if isinstance(query_or_query_embedding, str):
-                result = self._index.search(
-                    q={"content": query_or_query_embedding, "vector": self._dummy_vector},
-                    limit=top_k,
-                    filter_string=self._convert_filters(filters),
-                )
-            else:
-                result = self._index.search(
-                    q={"content": "", "vector": query_or_query_embedding},
-                    limit=top_k,
-                    filter_string=self._convert_filters(filters),
-                )
-
-            results.append(result)
-
-        return self._query_result_to_documents(results)
+        content, vector = "", self._dummy_vector
+        if isinstance(query, str):
+            content = query
+        else:
+            vector = query
+        result = self._index.search(
+            q={"customVector": {"content": content, "vector": vector}},
+            limit=top_k,
+            filter_string=self._convert_filters(filters),
+        )
+        return self._query_result_to_documents([result])[0]
 
     def to_dict(self) -> Dict[str, Any]:
         """

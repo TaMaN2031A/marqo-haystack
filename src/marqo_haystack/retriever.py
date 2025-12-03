@@ -9,34 +9,36 @@ from marqo_haystack import MarqoDocumentStore
 @component
 class MarqoRetriever:
     """
-    A component for retrieving documents from an MarqoDocumentStore with multiple queries.
+    A component for retrieving documents from an MarqoDocumentStore with query.
     """
 
     def __init__(self, document_store: MarqoDocumentStore, filters: Optional[Dict[str, Any]] = None, top_k: int = 10):
-        """Create an retriever component. Usually you pass some basic configuration
+        """
+        Create a retriever component. Usually you pass some basic configuration
         parameters to the constructor.
 
         Args:
             document_store (MarqoDocumentStore): An instance of a MarqoDocumentStore
             filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space.
-            Defaults to None.
-            top_k (int, optional):
+                Defaults to None.
+            top_k (int, optional): Maximum number of results to return.
         """
         self.filters = filters
         self.top_k = top_k
         self.document_store = document_store
 
-    @component.output_types(documents=List[List[Document]])
+    @component.output_types(documents=List[Document])
     def run(
         self,
-        queries: List[Union[str | List[float]]],
+        query: Union[str | List[float]],
         filters: Optional[Dict[str, Any]] = None,
         top_k: Optional[int] = None,
     ):
-        """Run the retriever on the given list of queries.
+        """
+        Run the retriever on a query.
 
         Args:
-            queries (List[str]): An input list of queries
+            query (List[str]): The query or the query embedding
             filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space.
             Defaults to None.
             top_k (Optional[int], optional): The maximum number of documents to retrieve. Defaults to None.
@@ -48,22 +50,4 @@ class MarqoRetriever:
         if not filters:
             filters = self.filters
 
-        return {"documents": self.document_store.search(queries, top_k, filters=filters)}
-
-
-@component
-class MarqoSingleRetriever(MarqoRetriever):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    @component.output_types(documents=List[Document])
-    def run(self, query: str, filters: Optional[Dict[str, Any]] = None, top_k: Optional[int] = None):
-        """Run the retriever on a single query.
-
-        Args:
-            query (str): An input query
-            filters (Optional[Dict[str, Any]], optional): A dictionary with filters to narrow down the search space.
-            Defaults to None.
-            top_k (Optional[int], optional): The maximum number of documents to retrieve. Defaults to None.
-        """
-        return {"documents": super().run([query], filters, top_k)["documents"][0]}
+        return {"documents": self.document_store.search(query, top_k, filters=filters)}
